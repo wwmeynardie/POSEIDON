@@ -8,6 +8,7 @@ import time
 import os
 import pymultinest
 from mpi4py import MPI
+from mpi4py.futures import MPIPoolExecutor
 from scipy.special import ndtri
 from numba.core.decorators import jit
 from scipy.special import erfcinv
@@ -1079,6 +1080,112 @@ def PyMultiNest_retrieval(planet, star, model, opac, data, prior_types,
     # Run PyMultiNest
     pymultinest.run(LogLikelihood, Prior, n_dims, **kwargs)
 
+def Nautilus_retrieval(planet, star, model, opac, data, prior_types, 
+                          prior_ranges, spectrum_type, wl, P, P_ref_set, 
+                          R_p_ref_set, P_param_set, He_fraction, N_slice_EM, 
+                          N_slice_DN, N_params, T_phot_grid, T_het_grid, 
+                          log_g_phot_grid, log_g_het_grid, I_phot_grid, 
+                          I_het_grid, y_p, F_s_obs, constant_gravity,
+                          chemistry_grid, **kwargs):
+    ''' 
+    Main function for conducting atmospheric retrievals with PyMultiNest.
+    
+    '''
+
+    # Unpack model properties
+    param_names = model['param_names']
+    param_species = model['param_species']
+    X_params = model['X_param_names']
+    cloud_param_names = model['cloud_param_names']
+    N_params_cum = model['N_params_cum']
+    Atmosphere_dimension = model['Atmosphere_dimension']
+    species_EM_gradient = model['species_EM_gradient']
+    species_DN_gradient = model['species_DN_gradient']
+    error_inflation = model['error_inflation']
+    offsets_applied = model['offsets_applied']
+    stellar_contam = model['stellar_contam']
+    PT_penalty = model['PT_penalty']
+    high_res_method = model['high_res_method']
+    high_res_param_names = model['high_res_param_names']
+    
+   # R_p = planet["planet_radius"]
+   # d = planet["system_distance"]
+   # R_s = star["R_s"]
+
+    # Unpack number of free mixing ratio parameters for prior function  
+    N_species_params = len(X_params)
+
+    # Assign PyMultiNest keyword arguments
+    n_dims = N_params
+
+    # Pre-compute normalisation for log-likelihood
+    if (high_res_method is None):   # Not needed for high-res retrievals
+        err_data = data["err_data"]
+        norm_log_default = (-0.5 * np.log(2.0 * np.pi * err_data * err_data)).sum()
+
+    # Create variable governing if a mixing ratio parameter combination lies in 
+    # the allowed CLR simplex space (X_i > 10^-12 and sum to 1)
+    global allowed_simplex    # Needs to be global, as prior function has no return
+
+    allowed_simplex = 1    # Only changes to 0 for CLR variables outside prior
+
+    # Define the priors
+    from nautilus import Prior
+    prior = Prior()
+    for i, parameter in enumerate(param_names):
+
+        # Uniform priors
+        if (prior_types[parameter] == 'uniform'):
+
+            min_value = prior_ranges[parameter][0]
+            max_value = prior_ranges[parameter][1]
+
+            prior.add_parameter(parameter, dist=(min_value, max_value))
+        
+    # Define the log likelihood function
+    def LogLikelihood(param_dict):
+        input_params = np.array([param_dict[p] for p in param_names])
+        ymodel, spectrum, _, ln_prior_TP = forward_model(input_params, planet, star, model, opac, data, 
+                                                        wl, P, P_ref_set, R_p_ref_set, P_param_set, 
+                                                        He_fraction, N_slice_EM, N_slice_DN, 
+                                                        spectrum_type, T_phot_grid, T_het_grid, 
+                                                        log_g_phot_grid, log_g_het_grid,
+                                                        I_phot_grid, I_het_grid, y_p, F_s_obs,
+                                                        constant_gravity, chemistry_grid)
+        
+        # Load error bars specified in data files
+        err_data = data['err_data']
+        
+        # Compute effective error, if unknown systematics included
+        if (error_inflation == None):
+            err_eff_sq = err_data*err_data
+            norm_log = norm_log_default
+        else:
+            if (error_inflation == 'Line15'):
+                err_eff_sq = (err_data*err_data + np.power(10.0, param_dict['b']))
+                norm_log = (-0.5*np.log(2.0*np.pi*err_eff_sq)).sum()
+            elif (error_inflation == 'Piette20'):
+                err_eff_sq = (err_data*err_data + (param_dict['x_tol']*ymodel)**2)
+                norm_log = (-0.5*np.log(2.0*np.pi*err_eff_sq)).sum()
+            elif (('Line15' in error_inflation) and ('Piette20' in error_inflation)):
+                err_eff_sq = (err_data*err_data + np.power(10.0, param_dict['b']) + 
+                            ((param_dict['x_tol']*ymodel)**2))
+                norm_log = (-0.5*np.log(2.0*np.pi*err_eff_sq)).sum()
+        
+        ydata = data['ydata']
+        loglikelihood = (-0.5*((ymodel - ydata)**2)/err_eff_sq).sum()
+        loglikelihood += norm_log
+
+        # Add the PT penalty 
+        loglikelihood += ln_prior_TP
+                    
+        return loglikelihood
+    
+    # Run the sampler
+    from nautilus import Sampler
+
+    sampler = Sampler(prior, LogLikelihood, pass_dict=True, n_live=500, pool=MPIPoolExecutor())
+    sampler.run(verbose=True)
 
 def retrieved_samples(planet, star, model, opac, data, retrieval_name, wl, P, 
                       P_ref_set, R_p_ref_set, P_param_set, He_fraction, 
