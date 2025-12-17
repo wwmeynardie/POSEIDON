@@ -231,6 +231,91 @@ def run_retrieval(planet, star, model, opac, data, priors, wl, P,
 
             print("All done! Output files can be found in " + output_dir + "results/")
 
+## NAUTILUS RETRIEVAL
+
+    # Run POSEIDON retrieval using Nautilus
+    if (sampling_algorithm == 'Nautilus'):
+
+        # Change directory into Nautilus result file folder
+        os.chdir(output_dir + 'Nautilus_results/')
+
+        # Set filepath for Nautilus output files
+        filepath = planet_name + '_' + retrieval_name + '.hdf5'
+
+        # Begin retrieval timer
+        if (rank == 0):
+            t0 = time.perf_counter()
+
+        # Run Nautilus
+        Nautilus_retrieval(planet, star, model, opac, data, prior_types, 
+                               prior_ranges, spectrum_type, wl, P, P_ref,
+                               R_p_ref, P_param_set, He_fraction, N_slice_EM, 
+                               N_slice_DN, N_params, T_phot_grid, T_het_grid, 
+                               log_g_phot_grid, log_g_het_grid, I_phot_grid, 
+                               I_het_grid, y_p, F_s_obs, constant_gravity,
+                               chemistry_grid, resume = resume, verbose = verbose,
+                               filepath = filepath, 
+                               n_live = N_live)
+
+        # Write retrieval results to file
+        if (rank == 0):
+
+            # Write retrieval runtime to terminal
+            t1 = time.perf_counter()
+            total = round_sig_figs((t1-t0)/3600.0, 2)  # Round to 2 significant figures
+            
+            print('POSEIDON retrieval finished in ' + str(total) + ' hours')
+
+            # Compute samples of retrieved P-T, mixing ratio profiles, and spectrum
+            T_low2, T_low1, T_median, \
+            T_high1, T_high2, \
+            log_X_low2, log_X_low1, \
+            log_X_median, log_X_high1, \
+            log_X_high2, \
+            spec_low2, spec_low1, \
+            spec_median, spec_high1, \
+            spec_high2, T_best, \
+            spectrum_best, ymodel_best, \
+            ymodel_samples = retrieved_samples(planet, star, model, opac, data,
+                                               retrieval_name, wl, P, P_ref, R_p_ref,
+                                               P_param_set, He_fraction, N_slice_EM, 
+                                               N_slice_DN, spectrum_type, T_phot_grid, 
+                                               T_het_grid, log_g_phot_grid,
+                                               log_g_het_grid, I_phot_grid, 
+                                               I_het_grid, y_p, F_s_obs,
+                                               constant_gravity, chemistry_grid,
+                                               N_output_samples)
+            
+            # Write POSEIDON retrieval output files 
+            write_MultiNest_results(planet, model, data, retrieval_name,
+                                    N_live, ev_tol, sampling_algorithm, wl, R,
+                                    ymodel_best, spectrum_type)
+                        
+            # Save sampled spectrum
+            write_retrieved_spectrum(retrieval_name, wl, spec_low2, 
+                                     spec_low1, spec_median, spec_high1, spec_high2)
+            
+            # Save ymodel samples
+            if (save_ymodel == True):
+
+                ymodel_samples_object = np.array(ymodel_samples).T
+
+                np.savetxt('../samples/' + retrieval_name + '_ymodel_samples.txt', ymodel_samples_object.T)
+            
+            # Only write retrieved P-T profile and mixing ratio arrays if atmosphere enabled
+            if (disable_atmosphere == False):
+
+                # Save sampled P-T profile
+                write_retrieved_PT(retrieval_name, P, T_low2, T_low1, 
+                                   T_median, T_high1, T_high2)
+
+                # Save sampled mixing ratio profiles
+                write_retrieved_log_X(retrieval_name, chemical_species, P, 
+                                      log_X_low2, log_X_low1, log_X_median, 
+                                      log_X_high1, log_X_high2)
+
+            print("All done! Output files can be found in " + output_dir + "results/")
+
     comm.Barrier()
 
     # Change directory back to directory where user's python script is located
@@ -1184,7 +1269,7 @@ def Nautilus_retrieval(planet, star, model, opac, data, prior_types,
     # Run the sampler
     from nautilus import Sampler
 
-    sampler = Sampler(prior, LogLikelihood, pass_dict=True, n_live=500, pool=MPIPoolExecutor())
+    sampler = Sampler(prior, LogLikelihood, pass_dict=True, n_live=500, pool=MPIPoolExecutor(), **kwargs)
     sampler.run(verbose=True)
 
 def retrieved_samples(planet, star, model, opac, data, retrieval_name, wl, P, 
