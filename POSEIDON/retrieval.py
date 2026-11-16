@@ -375,6 +375,7 @@ def forward_model(param_vector, planet, star, model, opac, data, wl, P, P_ref_se
     PT_penalty = model['PT_penalty']
     high_res_method = model['high_res_method']
     vsini_flag = model['vsini']
+    Av_flag = model['Av']
 
     # Unpack planet and star properties
     R_p = planet['planet_radius']
@@ -393,9 +394,11 @@ def forward_model(param_vector, planet, star, model, opac, data, wl, P, P_ref_se
     log_X_params, cloud_params, \
     geometry_params, stellar_params, \
     offset_params, vsini_params, \
-    err_inflation_params, high_res_params, surface_params = split_params(param_vector, N_params_cum)
+    extinction_params, err_inflation_params, \
+    high_res_params, surface_params = split_params(param_vector, N_params_cum)
 
     vsini_value = vsini_params[0] if vsini_flag else None
+    Av_value = extinction_params[0] if Av_flag else None
 
     # If the atmosphere is disabled
     if ((disable_atmosphere == True) and ('transmission' in spectrum_type)):
@@ -535,7 +538,8 @@ def forward_model(param_vector, planet, star, model, opac, data, wl, P, P_ref_se
         else:
             spectrum = compute_spectrum(planet, star, model, atmosphere, opac, wl,
                                         spectrum_type, y_p = y_p,
-                                        vsini = (vsini_value if (spectrum_type == 'direct_emission') else None))
+                                        vsini = (vsini_value if (spectrum_type == 'direct_emission') else None),
+                                        Av = (Av_value if (spectrum_type == 'direct_emission') else None))
 
         # Reject unphysical spectra (forced to be NaN by function above)
         if (np.any(np.isnan(spectrum))):
@@ -1145,7 +1149,7 @@ def PyMultiNest_retrieval(planet, star, model, opac, data, prior_types,
         
         # Unpack stellar parameters
         _, _, _, _, _, \
-        stellar_params, _, _, _, _, _ = split_params(cube, N_params_cum)
+        stellar_params, _, _, _, _, _, _ = split_params(cube, N_params_cum)
 
         # Reject models with spots hotter than faculae (by definition)
         if ((stellar_contam != None) and ('two_spots' in stellar_contam)):
@@ -1183,7 +1187,7 @@ def PyMultiNest_retrieval(planet, star, model, opac, data, prior_types,
 
             # Unpack high-resolution retrieval parameters
             _, _, _, _, _, \
-            _, _, _, _, high_res_params, _ = split_params(cube, N_params_cum)
+            _, _, _, _, _, high_res_params, _ = split_params(cube, N_params_cum)
 
             # Compute the log-likelihood relevant for high-resolution retrievals
             loglikelihood = loglikelihood_high_res(wl, spectrum, F_s_obs, data,
@@ -1196,7 +1200,7 @@ def PyMultiNest_retrieval(planet, star, model, opac, data, prior_types,
 
         # Unpack offset and error inflation parameters
         _, _, _, _, _, _, \
-        offset_params, _, err_inflation_params, _, _ = split_params(cube, N_params_cum)
+        offset_params, _, _, err_inflation_params, _, _ = split_params(cube, N_params_cum)
         
         # Load error bars specified in data files
         err_data = data['err_data']
@@ -1861,7 +1865,7 @@ def Nautilus_retrieval(planet, star, model, opac, data, prior_types,
 
         # Unpack stellar parameters
         _, _, _, _, _, \
-        stellar_params, _, _, _, _, _ = split_params(cube, N_params_cum)
+        stellar_params, _, _, _, _, _, _ = split_params(cube, N_params_cum)
 
         # Reject models with spots hotter than faculae (by definition)
         if ((stellar_contam != None) and ('two_spots' in stellar_contam)):
@@ -1899,7 +1903,7 @@ def Nautilus_retrieval(planet, star, model, opac, data, prior_types,
 
             # Unpack high-resolution retrieval parameters
             _, _, _, _, _, \
-            _, _, _, _, high_res_params, _ = split_params(cube, N_params_cum)
+            _, _, _, _, _, high_res_params, _ = split_params(cube, N_params_cum)
 
             # Compute the log-likelihood relevant for high-resolution retrievals
             loglikelihood = loglikelihood_high_res(wl, spectrum, F_s_obs, data,
@@ -1912,7 +1916,7 @@ def Nautilus_retrieval(planet, star, model, opac, data, prior_types,
 
         # Unpack offset and error inflation parameters
         _, _, _, _, _, _, \
-        offset_params, _, err_inflation_params, _, _ = split_params(cube, N_params_cum)
+        offset_params, _, _, err_inflation_params, _, _ = split_params(cube, N_params_cum)
 
         # Load error bars specified in data files
         err_data = data['err_data']
@@ -2506,7 +2510,7 @@ def get_retrieved_atmosphere(planet, model, P, P_ref_set = 10, R_p_ref_set = Non
     physical_params, PT_params, \
     log_X_params, cloud_params, \
     geometry_params, stellar_params, \
-    offset_params, _, \
+    offset_params, _, _, \
     err_inflation_params, highres_params, surface_params = split_params(param_values, N_params_cum)
 
     

@@ -410,7 +410,7 @@ def define_model(model_name, bulk_species, param_species,
                  high_res_method = None, alpha_high_res_option = 'log',
                  fix_alpha_high_res = False, fix_W_conv_high_res = False, 
                  fix_beta_high_res = True, fix_Delta_phi_high_res = True,
-                 vsini = False,
+                 vsini = False, Av=False,
                  lognormal_logwidth_free = False,
                  surface_components = [], surface_model = 'gray',
                  surface_percentage_option = 'linear', surface_percentage_apply_to = 'models'):
@@ -725,7 +725,7 @@ def define_model(model_name, bulk_species, param_species,
                                                             high_res_method, alpha_high_res_option,
                                                             fix_alpha_high_res, fix_W_conv_high_res, 
                                                             fix_beta_high_res, fix_Delta_phi_high_res,
-                                                            vsini,
+                                                            vsini, Av,
                                                             lognormal_logwidth_free,
                                                             surface_components, surface_model, 
                                                             surface_percentage_option,
@@ -779,6 +779,7 @@ def define_model(model_name, bulk_species, param_species,
              'high_res_method': high_res_method,
              'high_res_param_names': high_res_param_names,
              'vsini' : vsini,
+             'Av' : Av,
              'lognormal_logwidth_free' : lognormal_logwidth_free,
              'surface_param_names': surface_param_names, 
              'surface_components': surface_components,
@@ -1317,7 +1318,7 @@ def compute_spectrum(planet, star, model, atmosphere, opac, wl,
                      disable_continuum = False, suppress_print = False,
                      Gauss_quad = 2, use_photosphere_radius = True,
                      device = 'cpu', y_p = np.array([0.0]),
-                     return_albedo = False, vsini = None, epsilon = 0.6,
+                     return_albedo = False, vsini = None, epsilon = 0.6, Av=None,
                      kappa_contributions = [],cloud_properties_contributions = []):
     '''
     Calculate extinction coefficients, then solve the radiative transfer 
@@ -2142,6 +2143,9 @@ def compute_spectrum(planet, star, model, atmosphere, opac, wl,
     # Apply rotational broadening (e.g. for brown dwarfs / directly imaged planets)
     if (vsini is not None):
         spectrum = rotational_broadening(wl, spectrum, vsini, epsilon)
+
+    if (Av is not None):
+        spectrum = apply_extinction(wl, spectrum, Av)
         
     # Write spectrum to file
     if (save_spectrum == True):
@@ -2515,6 +2519,7 @@ def set_priors(planet, star, model, data, prior_types = {}, prior_ranges = {}):
                              'delta_rel_2': [-100, 100],
                              'delta_rel_3': [-100, 100],
                              'vsini' : [0, 50], # km/s
+                             'Av' : [0, 10], # mag
                              'b': [np.log10(0.001*np.min(err_data**2)),
                                    np.log10(100.0*np.max(err_data**2))],
                              'x_tol': [0.05, 1.0],
@@ -2901,3 +2906,28 @@ def rotational_broadening(wl, flux, vsini, epsilon):
     flux_broadened = np.convolve(flux_padded, kernel, mode='valid') * d_log_wl
 
     return flux_broadened
+
+def apply_extinction(wl, flux, Av, Rv=3.1):
+    '''
+    Apply interstellar extinction to a spectrum evaluated on a wavelength
+    grid that is uniformly sampled in log(wavelength) -- i.e. a constant
+    spectral resolution grid such as that produced by wl_grid_constant_R.
+
+    Args:
+        wl (np.array of float):
+            Wavelength grid (um), uniformly spaced in log(wl).
+        flux (np.array of float):
+            Spectrum evaluated on the wl grid (same length as wl).
+        Av (float):
+            Interstellar extinction in magnitudes at V-band (0.55 um).
+        Rv (float):
+            Ratio of total to selective extinction (A_V / E(B-V)).
+
+    Returns:
+        flux_extincted (np.array of float):
+            Extincted spectrum, sampled on the same wl grid.
+    '''
+    a_lam = Av * (0.574*((1/wl)**1.61) - ((0.527 * (1/wl)**1.61)/Rv) )  # extinction law from Cardelli+89
+    flux_extincted = flux*10**( - 0.4*a_lam)
+
+    return flux_extincted
